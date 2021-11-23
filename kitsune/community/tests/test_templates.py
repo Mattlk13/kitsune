@@ -1,22 +1,21 @@
 from nose.tools import eq_
-
 from pyquery import PyQuery as pq
 
-from kitsune.customercare.tests import ReplyFactory
 from kitsune.forums.tests import ThreadFactory
 from kitsune.questions.tests import AnswerFactory
-from kitsune.search.tests.test_es import ElasticTestCase
+from kitsune.search.tests import Elastic7TestCase
 from kitsune.sumo.templatetags.jinja_helpers import urlparams
 from kitsune.sumo.tests import LocalizingClient
 from kitsune.sumo.urlresolvers import reverse
 from kitsune.users.tests import UserFactory
-from kitsune.wiki.tests import DocumentFactory, RevisionFactory, ApprovedRevisionFactory
+from kitsune.wiki.tests import ApprovedRevisionFactory, DocumentFactory, RevisionFactory
 
 
-class UserSearchTests(ElasticTestCase):
+class UserSearchTests(Elastic7TestCase):
     """Tests for the Community Hub user search page."""
 
     client_class = LocalizingClient
+    search_tests = True
 
     def test_no_results(self):
         UserFactory(username="foo", profile__name="Foo Bar")
@@ -46,10 +45,11 @@ class UserSearchTests(ElasticTestCase):
         eq_(len(doc(".results-user")), 2)
 
 
-class LandingTests(ElasticTestCase):
+class LandingTests(Elastic7TestCase):
     """Tests for the Community Hub landing page."""
 
     client_class = LocalizingClient
+    search_tests = True
 
     def test_top_contributors(self):
         """Verify the top contributors appear."""
@@ -61,10 +61,6 @@ class LandingTests(ElasticTestCase):
         AnswerFactory()
         AnswerFactory()
         AnswerFactory()
-        ReplyFactory()
-        ReplyFactory()
-        ReplyFactory()
-        ReplyFactory()
 
         self.refresh()
 
@@ -74,7 +70,6 @@ class LandingTests(ElasticTestCase):
         eq_(1, len(doc("ul.kb > li")))
         eq_(2, len(doc("ul.l10n > li")))
         eq_(3, len(doc("ul.questions > li")))
-        eq_(4, len(doc("ul.army-of-awesome > li")))
 
     def test_wiki_section(self):
         """Verify the wiki doc appears on the landing page."""
@@ -110,8 +105,10 @@ class LandingTests(ElasticTestCase):
         assert "we are SUMO!" in doc("#recent-threads td").html()
 
 
-class TopContributorsTests(ElasticTestCase):
+class TopContributorsTests(Elastic7TestCase):
     """Tests for the Community Hub top contributors page."""
+
+    search_tests = True
 
     client_class = LocalizingClient
 
@@ -120,21 +117,6 @@ class TopContributorsTests(ElasticTestCase):
             urlparams(reverse("community.top_contributors", args=["foobar"]))
         )
         eq_(404, response.status_code)
-
-    def test_top_army_of_awesome(self):
-        r1 = ReplyFactory()
-        r2 = ReplyFactory()
-
-        self.refresh()
-
-        response = self.client.get(
-            urlparams(reverse("community.top_contributors", args=["army-of-awesome"]))
-        )
-        eq_(200, response.status_code)
-        doc = pq(response.content)
-        eq_(2, len(doc("li.results-user")))
-        assert str(r1.user.username) in response.content
-        assert str(r2.user.username) in response.content
 
     def test_top_questions(self):
         a1 = AnswerFactory()

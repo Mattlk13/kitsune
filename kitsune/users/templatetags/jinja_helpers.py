@@ -34,7 +34,7 @@ def profile_url(user, edit=False):
 def profile_avatar(user, size=200):
     """Return a URL to the user's avatar."""
     try:  # This is mostly for tests.
-        profile = Profile.objects.get(user_id=user.id)
+        profile = user.profile
     except (Profile.DoesNotExist, AttributeError):
         avatar = settings.STATIC_URL + settings.DEFAULT_AVATAR
         profile = None
@@ -70,7 +70,7 @@ def profile_avatar(user, size=200):
 def display_name(user):
     """Return a display name if set, else the username."""
     try:  # Also mostly for tests.
-        profile = Profile.objects.get(user_id=user.id)
+        profile = user.profile
     except (Profile.DoesNotExist, AttributeError):
         return user.username
     return profile.display_name if profile else user.username
@@ -100,6 +100,9 @@ def user_list(users):
 @library.global_function
 def private_message(user):
     """Return a link to private message the user."""
+    # return an empty element - can match the :empty pseudo selector
+    if not user.is_active:
+        return Markup("<div></div>")
     url = urlparams(reverse("messages.new"), to=user.username)
     msg = _("Private message")
     return Markup(

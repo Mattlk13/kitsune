@@ -137,11 +137,6 @@ let chartSetups = {
         name: gettext('Support Forums'),
         slug: 'support_forum',
         func: k.Graph.identity('support_forum')
-      },
-      {
-        name: gettext('Army of Awesome'),
-        slug: 'aoa',
-        func: k.Graph.identity('aoa')
       }
     ]
   },
@@ -249,7 +244,9 @@ function handleDataError($container) {
 
 function makeRetentionChart(settings) {
   let $container = settings.container;
-  let startDate = moment().day(1).day(-84).format('YYYY-MM-DD');
+  let startDate = new Date();
+  startDate.setDate(startDate.getDate() - startDate.getDay() - 84);
+  startDate = startDate.toISOString().split("T")[0];
   let defaultContributorType = $container.data('contributor-type') || 'contributor';
   let urlToFetch = `${$container.data('url')}?start=${startDate}`;
   let fetchDataset = getChartData(urlToFetch, 'results');

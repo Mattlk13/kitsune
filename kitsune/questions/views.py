@@ -1,7 +1,6 @@
 import json
 import logging
 import random
-import time
 from collections import OrderedDict
 from datetime import date, datetime, timedelta
 
@@ -26,11 +25,14 @@ from django.utils.translation import ugettext_lazy as _lazy
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django_user_agents.utils import get_user_agent
+from sentry_sdk import capture_exception
 from taggit.models import Tag
 from tidings.events import ActivationRequestFailed
 from tidings.models import Watch
+from zenpy.lib.exception import APIException
 
 from kitsune.access.decorators import login_required, permission_required
+from kitsune.customercare.forms import ZendeskForm
 from kitsune.flagit.models import FlaggedObject
 from kitsune.products.models import Product, Topic
 from kitsune.questions import config
@@ -41,19 +43,10 @@ from kitsune.questions.forms import (
     AnswerForm,
     EditQuestionForm,
     NewQuestionForm,
-    StatsForm,
     WatchQuestionForm,
 )
-from kitsune.questions.models import (
-    Answer,
-    AnswerVote,
-    Question,
-    QuestionLocale,
-    QuestionMappingType,
-    QuestionVote,
-)
-from kitsune.questions.utils import get_mobile_product_from_ua
-from kitsune.search.es_utils import ES_EXCEPTIONS, F, Sphilastic
+from kitsune.questions.models import Answer, AnswerVote, Question, QuestionLocale, QuestionVote
+from kitsune.questions.utils import get_mobile_product_from_ua, get_featured_articles
 from kitsune.sumo.decorators import ratelimit, ssl_required
 from kitsune.sumo.templatetags.jinja_helpers import urlparams
 from kitsune.sumo.urlresolvers import reverse, split_path
@@ -63,7 +56,6 @@ from kitsune.upload.models import ImageAttachment
 from kitsune.upload.views import upload_imageattachment
 from kitsune.users.models import Setting
 from kitsune.wiki.facets import topics_for
-from kitsune.wiki.utils import get_featured_articles
 
 log = logging.getLogger("k.questions")
 
@@ -234,6 +226,9 @@ def question_list(request, product_slug):
     # Exclude questions over 90 days old without an answer.
     oldest_date = date.today() - timedelta(days=90)
     question_qs = question_qs.exclude(created__lt=oldest_date, num_answers=0)
+
+    # Exclude questions updated over 1 year ago to avoid sorting the entire table.
+    question_qs = question_qs.filter(updated__gt=date.today() - timedelta(days=365))
 
     # Filter by products.
     if products:
@@ -472,25 +467,6 @@ def aaq(request, product_key=None, category_key=None, step=1):
 
     template = "questions/new_question.html"
 
-    # Check if any product forum has a locale in the user's current locale
-    if (
-        request.LANGUAGE_CODE not in QuestionLocale.objects.locales_list()
-        and request.LANGUAGE_CODE != settings.WIKI_DEFAULT_LANGUAGE
-    ):
-
-        locale, path = split_path(request.path)
-        path = "/" + settings.WIKI_DEFAULT_LANGUAGE + "/" + path
-
-        old_lang = settings.LANGUAGES_DICT[request.LANGUAGE_CODE.lower()]
-        new_lang = settings.LANGUAGES_DICT[settings.WIKI_DEFAULT_LANGUAGE.lower()]
-        msg = _(
-            "The questions forum isn't available in {old_lang}, we "
-            "have redirected you to the {new_lang} questions forum."
-        ).format(old_lang=old_lang, new_lang=new_lang)
-        messages.add_message(request, messages.WARNING, msg)
-
-        return HttpResponseRedirect(path)
-
     # Check if the user is using a mobile device,
     # render step 2 if they are
     product_key = product_key or request.GET.get("product")
@@ -521,21 +497,13 @@ def aaq(request, product_key=None, category_key=None, step=1):
             product = Product.objects.get(slug=product_config["product"])
         except Product.DoesNotExist:
             raise Http404
-        else:
-            # Check if the selected product has a forum in the user's locale
-            if not product.questions_locales.filter(locale=request.LANGUAGE_CODE).count():
-                locale, path = split_path(request.path)
-                path = "/" + settings.WIKI_DEFAULT_LANGUAGE + "/" + path
-
-                old_lang = settings.LANGUAGES_DICT[request.LANGUAGE_CODE.lower()]
-                new_lang = settings.LANGUAGES_DICT[settings.WIKI_DEFAULT_LANGUAGE.lower()]
-                msg = _(
-                    "The questions forum isn't available for {product} in {old_lang}, we "
-                    "have redirected you to the {new_lang} questions forum."
-                ).format(product=product.title, old_lang=old_lang, new_lang=new_lang)
-                messages.add_message(request, messages.WARNING, msg)
-
-                return HttpResponseRedirect(path)
+        has_public_forum = product.questions_enabled(locale=request.LANGUAGE_CODE)
+        has_subscriptions = product.has_subscriptions
+        request.session["aaq_context"] = {
+            "key": product_key,
+            "has_public_forum": has_public_forum,
+            "has_subscriptions": has_subscriptions,
+        }
 
     context = {
         "products": config.products,
@@ -544,10 +512,58 @@ def aaq(request, product_key=None, category_key=None, step=1):
         "host": Site.objects.get_current().domain,
     }
 
+    if step > 1:
+        context["has_subscriptions"] = has_subscriptions
+
     if step == 2:
         context["featured"] = get_featured_articles(product, locale=request.LANGUAGE_CODE)
         context["topics"] = topics_for(product, parent=None)
+
     elif step == 3:
+        # Check if the selected product has a forum in the user's locale
+        if not has_public_forum:
+            locale, path = split_path(request.path)
+            path = "/" + settings.WIKI_DEFAULT_LANGUAGE + "/" + path
+
+            old_lang = settings.LANGUAGES_DICT[request.LANGUAGE_CODE.lower()]
+            new_lang = settings.LANGUAGES_DICT[settings.WIKI_DEFAULT_LANGUAGE.lower()]
+            msg = _(
+                "The questions forum isn't available for {product} in {old_lang}, we "
+                "have redirected you to the {new_lang} questions forum."
+            ).format(product=product.title, old_lang=old_lang, new_lang=new_lang)
+            messages.add_message(request, messages.WARNING, msg)
+
+            return HttpResponseRedirect(path)
+
+        if has_subscriptions:
+            zendesk_form = ZendeskForm(data=request.POST or None, product=product)
+            context["form"] = zendesk_form
+
+            if zendesk_form.is_valid():
+                try:
+                    zendesk_form.send(request.user)
+
+                    messages.add_message(
+                        request,
+                        messages.SUCCESS,
+                        _(
+                            "Done! Your message was sent to Mozilla Support, "
+                            "thank you for reaching out. "
+                            "We'll contact you via email as soon as possible."
+                        ),
+                    )
+
+                    url = reverse("products.product", args=[product.slug])
+                    return HttpResponseRedirect(url)
+
+                except APIException as err:
+                    messages.add_message(
+                        request, messages.ERROR, _("That didn't work. Please try again.")
+                    )
+                    capture_exception(err)
+
+            return render(request, template, context)
+
         form = NewQuestionForm(
             product=product_config,
             data=request.POST or None,
@@ -574,9 +590,7 @@ def aaq(request, product_key=None, category_key=None, step=1):
             # Submitting the question counts as a vote
             question_vote(request, question.id)
 
-            my_questions_url = urlparams(
-                reverse("search.advanced"), a=1, asked_by=request.user, w=2
-            )
+            my_questions_url = reverse("users.questions", args=[request.user.username])
             messages.add_message(
                 request,
                 messages.SUCCESS,
@@ -657,7 +671,7 @@ def edit_question(request, question_id):
             question.content = form.cleaned_data["content"]
             question.updated_by = user
 
-            question.save()
+            question.save(update=True)
 
             if form.cleaned_data.get("is_spam"):
                 _add_to_moderation_queue(request, question)
@@ -704,7 +718,7 @@ def reply(request, question_id):
     if not question.allows_new_answer(request.user):
         raise PermissionDenied
 
-    form = AnswerForm(request.POST, **{"user": request.user})
+    form = AnswerForm(request.POST, **{"user": request.user, "question": question})
 
     # NOJS: delete images
     if "delete_images" in request.POST:
@@ -1283,103 +1297,6 @@ def answer_preview_async(request):
     return render(request, template, {"answer_preview": answer})
 
 
-def stats_topic_data(bucket_days, start, end, locale=None, product=None):
-    """Gets a zero filled histogram for each question topic.
-
-    Uses elastic search.
-    """
-    search = Sphilastic(QuestionMappingType)
-
-    bucket = 24 * 60 * 60 * bucket_days
-
-    # datetime is a subclass of date.
-    if isinstance(start, date):
-        start = int(time.mktime(start.timetuple()))
-    if isinstance(end, date):
-        end = int(time.mktime(end.timetuple()))
-
-    f = F(model="questions_question")
-    f &= F(created__gt=start)
-    f &= F(created__lt=end)
-
-    if locale:
-        f &= F(question_locale=locale)
-
-    if product:
-        f &= F(product=product.slug)
-
-    topics = Topic.objects.values("slug", "title")
-    facets = {}
-    # TODO: If we change to using datetimes in ES, 'histogram' below
-    # should change to 'date_histogram'.
-    for topic in topics:
-        filters = search._process_filters([f & F(topic=topic["slug"])])
-        facets[topic["title"]] = {
-            "histogram": {"interval": bucket, "field": "created"},
-            "facet_filter": filters,
-        }
-
-    # Get some sweet histogram data.
-    search = search.facet_raw(**facets).values_dict()
-    try:
-        histograms_data = search.facet_counts()
-    except ES_EXCEPTIONS:
-        return []
-
-    # The data looks like this right now:
-    # {
-    #   'topic-1': [{'key': 1362774285, 'count': 100}, ...],
-    #   'topic-2': [{'key': 1362774285, 'count': 100}, ...],
-    # }
-
-    # Massage the data to achieve 2 things:
-    # - All points between the earliest and the latest values have data,
-    #   at a resolution of 1 day.
-    # - It is in a format usable by k.Graph.
-    #   - ie: [{"created": 1362774285, 'topic-1': 10, 'topic-2': 20}, ...]
-
-    for series in histograms_data.values():
-        if series["entries"]:
-            earliest_point = series["entries"][0]["key"]
-            break
-    else:
-        return []
-
-    latest_point = earliest_point
-    interim_data = {}
-
-    for key, data in histograms_data.items():
-        if not data:
-            continue
-        for point in data:
-            timestamp = point["key"]
-            value = point["count"]
-
-            earliest_point = min(earliest_point, timestamp)
-            latest_point = max(latest_point, timestamp)
-
-            datum = interim_data.get(timestamp, {"date": timestamp})
-            datum[key] = value
-            interim_data[timestamp] = datum
-
-    # Interim data is now like
-    # {
-    #   1362774285: {'date': 1362774285, 'topic-1': 100, 'topic-2': 200},
-    # }
-
-    # Zero fill the interim data.
-    timestamp = earliest_point
-    while timestamp <= latest_point:
-        datum = interim_data.get(timestamp, {"date": timestamp})
-        for key in histograms_data.keys():
-            if key not in datum:
-                datum[key] = 0
-        timestamp += bucket
-
-    # The keys are irrelevant, and the values are exactly what we want.
-    return list(interim_data.values())
-
-
 def metrics(request, locale_code=None):
     """The Support Forum metrics dashboard."""
     template = "questions/metrics.html"
@@ -1388,26 +1305,7 @@ def metrics(request, locale_code=None):
     if product:
         product = get_object_or_404(Product, slug=product)
 
-    form = StatsForm(request.GET)
-    if form.is_valid():
-        bucket_days = form.cleaned_data["bucket"]
-        start = form.cleaned_data["start"]
-        end = form.cleaned_data["end"]
-    else:
-        bucket_days = 1
-        start = date.today() - timedelta(days=30)
-        end = date.today()
-
-    graph_data = stats_topic_data(bucket_days, start, end, locale_code, product)
-
-    for group in graph_data:
-        for name, count in list(group.items()):
-            if count == 0:
-                del group[name]
-
     data = {
-        "graph": graph_data,
-        "form": form,
         "current_locale": locale_code,
         "product": product,
         "products": Product.objects.filter(visible=True),
@@ -1422,7 +1320,8 @@ def _answers_data(request, question_id, form=None, watch_form=None, answer_previ
     answers_ = question.answers.all()
 
     # Remove spam flag if an answer passed the moderation queue
-    answers_.filter(flags__status=2).update(is_spam=False)
+    if not settings.READ_ONLY:
+        answers_.filter(flags__status=2).update(is_spam=False)
 
     if not request.user.has_perm("flagit.can_moderate"):
         answers_ = answers_.filter(is_spam=False)

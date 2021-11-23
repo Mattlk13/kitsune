@@ -13,11 +13,11 @@
 
 {% block contentwrap %}
 
-{% set aaq_product = request.session.get('product_key') %}
-{% if aaq_product %}
+{% set aaq_context = request.session.get('aaq_context') %}
+{% if aaq_context and aaq_context.key %}
   <section class="sumo-page-section question-masthead shade-bg">
     <div class="mzp-l-content">
-      {{ progress_bar(3, product_key=aaq_product) }}
+      {{ progress_bar(3, product_key=aaq_context.key) }}
     </div>
   </section>
 {% endif %}
@@ -41,13 +41,14 @@
               <div class="sumo-page-section">
                 <h1 class="sumo-page-heading">{{ _('Log in / Sign up with Firefox Accounts') }}</h1>
                 <p>
-                  {% if request.session.get('in-aaq') %}
+                  {% if aaq_context and not aaq_context.has_subscriptions %}
                     {{ _('Never miss an answer. A free Firefox Account lets you view your question history and track or post responses.')}}
                   {% else %}
-                    {{ _('We upgraded our log-in system to replace Mozilla Support accounts with Firefox Accounts. Firefox Accounts
-                    offers one log-in for convenient and secure access to Mozilla services.') }}
-                    <a href="{{ url('wiki.document', 'firefox-accounts-mozilla-support-faq') }}"> {{ _('See our FAQ') }}</a>
-                    {{ _('for more information') }}.
+                    {% trans url=url('wiki.document', 'firefox-accounts-mozilla-support-faq') %}
+                      We've upgraded our log-in system to replace Mozilla Support accounts with Firefox Accounts.
+                      Firefox Accounts offers one log-in for convenient and secure access to Mozilla services.
+                      <a href="{{ url }}">See our FAQ</a> for more information.
+                    {% endtrans %}
                   {% endif %}
                 </p>
 
@@ -57,9 +58,14 @@
                   </p>
 
                   <p class="help-text">
-                    {{ _('Continuing with Firefox Accounts means you have agreed with the
-                    <a href="https://www.mozilla.org/en-US/about/legal/terms/services/">Term and Conditions</a> and
-                    <a href="https://www.mozilla.org/en-US/privacy/firefox/">Privacy Policy</a>' | safe )}}.
+                    {% trans
+                      terms_url="https://www.mozilla.org/about/legal/terms/services/",
+                      privacy_url="https://www.mozilla.org/privacy/firefox/"
+                    %}
+                      Continuing with Firefox Accounts means you have agreed with the
+                      <a href="{{ terms_url }}">Terms and Conditions</a> and
+                      <a href="{{ privacy_url }}">Privacy Policy</a>.
+                    {% endtrans %}
                   </p>
                 </div>
               </div>

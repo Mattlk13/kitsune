@@ -1,4 +1,5 @@
 import json
+import waffle
 from ast import literal_eval
 
 import requests
@@ -32,6 +33,7 @@ from mozilla_django_oidc.views import (
     OIDCAuthenticationRequestView,
     OIDCLogoutView,
 )
+from sentry_sdk import capture_exception, capture_message
 from tidings.models import Watch
 
 from kitsune import users as constants
@@ -41,12 +43,13 @@ from kitsune.questions.utils import mark_content_as_spam, num_answers, num_quest
 from kitsune.sumo.decorators import ssl_required
 from kitsune.sumo.templatetags.jinja_helpers import urlparams
 from kitsune.sumo.urlresolvers import reverse
-from kitsune.sumo.utils import get_next_url, simple_paginate
+from kitsune.sumo.utils import get_next_url, paginate, simple_paginate
 from kitsune.users.forms import ProfileForm, SettingsForm, UserForm
 from kitsune.users.models import SET_ID_PREFIX, AccountEvent, Deactivation, Profile
 from kitsune.users.tasks import (
     process_event_delete_user,
     process_event_password_change,
+    process_event_profile_change,
     process_event_subscription_state_change,
 )
 from kitsune.users.templatetags.jinja_helpers import profile_url
@@ -68,8 +71,11 @@ def user_auth(request, notification=None):
     FXA sign-up/login and the legacy login form
     """
     next_url = get_next_url(request) or reverse("home")
-
-    return render(request, "users/auth.html", {"next_url": next_url, "notification": notification})
+    return render(
+        request,
+        "users/auth.html",
+        {"next_url": next_url, "notification": notification},
+    )
 
 
 @ssl_required
@@ -174,8 +180,59 @@ def deactivation_log(request):
     return render(request, "users/deactivation_log.html", {"deactivations": deactivations})
 
 
+def questions_contributed(request, username):
+    # plus sign (+) is converted to space
+    username = username.replace(" ", "+")
+    profile = get_object_or_404(Profile, user__username=username, user__is_active=True)
+
+    questions = paginate(request, profile.user.questions.order_by("-created"))
+
+    return render(
+        request,
+        "users/questions_contributed.html",
+        {
+            "profile": profile,
+            "questions": questions,
+        },
+    )
+
+
+def answers_contributed(request, username):
+    # plus sign (+) is converted to space
+    username = username.replace(" ", "+")
+    profile = get_object_or_404(Profile, user__username=username, user__is_active=True)
+
+    # don't paginate this, we have contributors with an incredible number of questions answered
+    # which means the later pages would create queries taking > 10 seconds to run
+    answers = profile.user.answers.order_by("-created").select_related("question")[:100]
+
+    return render(
+        request,
+        "users/answers_contributed.html",
+        {
+            "profile": profile,
+            "answers": answers,
+        },
+    )
+
+
+@login_required
+@require_GET
+def subscribed_products(request, username):
+    # plus sign (+) is converted to space
+    username = username.replace(" ", "+")
+    user = get_object_or_404(User, username=username, is_active=True)
+    if user != request.user:
+        raise Http404
+
+    context = {"user": user, "products": user.profile.products.all()}
+    return render(request, "users/user_subscriptions.html", context)
+
+
 @require_GET
 def documents_contributed(request, username):
+    # plus sign (+) is converted to space
+    username = username.replace(" ", "+")
     user_profile = get_object_or_404(Profile, user__username=username, user__is_active=True)
 
     return render(
@@ -312,6 +369,20 @@ def make_contributor(request):
         return HttpResponseRedirect(reverse("landings.get_involved"))
 
 
+def become(request, username=None):
+    """
+    Log in with only a username, for use in local development.
+    Set ENABLE_DEV_LOGIN=True to enable.
+    """
+    if not (settings.DEV and settings.ENABLE_DEV_LOGIN):
+        raise Http404
+
+    user = User.objects.get(username=username)
+    auth.login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+
+    return HttpResponseRedirect(reverse("home"))
+
+
 class FXAAuthenticateView(OIDCAuthenticationRequestView):
     @staticmethod
     def get_settings(attr, *args):
@@ -330,6 +401,9 @@ class FXAAuthenticateView(OIDCAuthenticationRequestView):
     def get(self, request):
         is_contributor = request.GET.get("is_contributor") == "True"
         request.session["is_contributor"] = is_contributor
+
+        request.session["login_locale"] = getattr(request, "LANGUAGE_CODE", settings.LANGUAGE_CODE)
+
         return super(FXAAuthenticateView, self).get(request)
 
 
@@ -359,6 +433,14 @@ class FXAAuthenticationCallbackView(OIDCAuthenticationCallbackView):
                 "Please contact an administrator if you believe this is an error"
             ),
         )
+        if waffle.switch_is_active("log-login-failure"):
+            # sentry will attempt to find an exception being handled
+            # or if none is (I think by this point it will have been handled)
+            # just send a stack trace
+            capture_exception()
+            # I might be completely wrong about the above so, for now, also send a message
+            capture_message("This account is not active error.", level="error")
+
         return HttpResponseRedirect(reverse("home"))
 
 
@@ -469,6 +551,8 @@ class WebhookView(View):
                     process_event_subscription_state_change.delay(account_event.id)
                 elif short_id == AccountEvent.PASSWORD_CHANGE:
                     process_event_password_change.delay(account_event.id)
+                elif short_id == AccountEvent.PROFILE_CHANGE:
+                    process_event_profile_change.delay(account_event.id)
                 else:
                     account_event.status = AccountEvent.NOT_IMPLEMENTED
                     account_event.save()

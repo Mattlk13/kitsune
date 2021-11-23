@@ -1,24 +1,24 @@
 import logging
-from datetime import datetime
 
 from django.conf import settings
+from django.contrib.auth.models import Group
 from django.http import Http404
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import get_object_or_404, render
 
 from kitsune.community.utils import (
-    top_contributors_aoa,
-    top_contributors_questions,
     top_contributors_kb,
     top_contributors_l10n,
+    top_contributors_questions,
 )
 from kitsune.forums.models import Thread
 from kitsune.products.models import Product
 from kitsune.questions.models import QuestionLocale
-from kitsune.search.es_utils import ES_EXCEPTIONS
+from kitsune.search.base import SumoSearchPaginator
+from kitsune.search.search import ProfileSearch
 from kitsune.sumo.parser import get_object_fallback
-from kitsune.users.models import UserMappingType
+from kitsune.sumo.utils import paginate
+from kitsune.users.models import CONTRIBUTOR_GROUP
 from kitsune.wiki.models import Document
-
 
 log = logging.getLogger("k.community")
 
@@ -48,8 +48,6 @@ def home(request):
     }
 
     if locale:
-        data["top_contributors_aoa"], _ = top_contributors_aoa(locale=locale)
-
         # If the locale is en-US we should top KB contributors, else we show
         # top l10n contributors for that locale
         if locale == settings.WIKI_DEFAULT_LANGUAGE:
@@ -68,7 +66,6 @@ def home(request):
     else:
         # If no locale is specified, we show overall top contributors
         # across locales.
-        data["top_contributors_aoa"], _ = top_contributors_aoa()
         data["top_contributors_kb"], _ = top_contributors_kb(product=product)
         data["top_contributors_l10n"], _ = top_contributors_l10n(product=product)
         data["top_contributors_questions"], _ = top_contributors_questions(product=product)
@@ -81,54 +78,21 @@ def search(request):
 
     Uses the ES user's index.
     """
-    results = []
-    search_errored = False
-    q = request.GET.get("q")
 
-    if q:
-        lowerq = q.lower()
-        try:
-            results = (
-                UserMappingType.search()
-                .query(
-                    iusername__match=lowerq,
-                    idisplay_name__match_whitespace=lowerq,
-                    itwitter_usernames__match=lowerq,
-                    should=True,
-                )
-                .values_dict(
-                    "id",
-                    "username",
-                    "display_name",
-                    "avatar",
-                    "twitter_usernames",
-                    "last_contribution_date",
-                )
-            )
-            results = UserMappingType.reshape(results)
+    data = {}
 
-        except ES_EXCEPTIONS:
-            search_errored = True
-            log.exception("User search failed.")
-
-    # For now, we're just truncating results at 30 and not doing any
-    # pagination. If somebody complains, we can add pagination or something.
-    results = list(results[:30])
-
-    # Calculate days since last activity.
-    for r in results:
-        lcd = r.get("last_contribution_date", None)
-        if lcd:
-            delta = datetime.now() - lcd
-            r["days_since_last_activity"] = delta.days
-        else:
-            r["days_since_last_activity"] = None
-
-    data = {
-        "q": q,
-        "results": results,
-        "search_errored": search_errored,
-    }
+    if q := request.GET.get("q"):
+        contributor_group_ids = list(
+            Group.objects.filter(
+                name__in=[
+                    "Contributors",
+                    CONTRIBUTOR_GROUP,
+                ]
+            ).values_list("id", flat=True)
+        )
+        search = ProfileSearch(query=q, group_ids=contributor_group_ids)
+        pages = paginate(request, search, paginator_cls=SumoSearchPaginator)
+        data = {"q": q, "results": search.results, "pages": pages}
 
     return render(request, "community/search.html", data)
 
@@ -151,10 +115,7 @@ def top_contributors(request, area):
     if product:
         product = get_object_or_404(Product, slug=product)
 
-    if area == "army-of-awesome":
-        results, total = top_contributors_aoa(locale=locale, count=page_size, page=page)
-        locales = settings.SUMO_LANGUAGES
-    elif area == "questions":
+    if area == "questions":
         results, total = top_contributors_questions(
             locale=locale, product=product, count=page_size, page=page
         )

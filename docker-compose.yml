@@ -1,4 +1,4 @@
-version: '3.4'
+version: "3.4"
 services:
   web:
     image: itsre/sumo-kitsune:base-dev-${GIT_COMMIT_SHORT:-latest}
@@ -11,12 +11,11 @@ services:
     tty: true
     depends_on:
       - mariadb
-      - elasticsearch
+      - elasticsearch7
+      - kibana
       - redis
       - celery
-      - celery-fxa
       - celery-flower
-      - celery-beat
       - mailcatcher
     ports:
       - "8000:8000"
@@ -30,7 +29,7 @@ services:
     user: ${UID:-kitsune}
     depends_on:
       - mariadb
-      - elasticsearch
+      - elasticsearch7
       - redis
 
   test-js:
@@ -47,7 +46,7 @@ services:
     env_file: .env-test
     depends_on:
       - mariadb
-      - elasticsearch
+      - elasticsearch7
       - redis
 
   test-image-js:
@@ -138,8 +137,23 @@ services:
     volumes:
       - mysqlvolume:/var/lib/mysql
 
-  elasticsearch:
-    image: elasticsearch:2.4
+  elasticsearch7:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.2
+    environment:
+      - discovery.type=single-node
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - ./kitsune/search/dictionaries/synonyms:/usr/share/elasticsearch/config/synonyms
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.10.2
+    ports:
+      - 5601:5601
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch7:9200
+      ELASTICSEARCH_HOSTS: http://elasticsearch7:9200
 
   redis:
     image: redis:3
@@ -147,17 +161,6 @@ services:
   celery:
     image: itsre/sumo-kitsune:base-dev-${GIT_COMMIT_SHORT:-latest}
     command: celery -A kitsune worker -l info -n default@%h
-    env_file: .env
-    volumes:
-      - ./:/app:delegated
-    user: ${UID:-kitsune}
-    depends_on:
-      - mariadb
-      - redis
-
-  celery-fxa:
-    image: itsre/sumo-kitsune:base-dev-${GIT_COMMIT_SHORT:-latest}
-    command: celery -A kitsune worker -Q fxa -l info -n fxa@%h
     env_file: .env
     volumes:
       - ./:/app:delegated
@@ -179,21 +182,10 @@ services:
     ports:
       - "5555:5555"
 
-  celery-beat:
-    image: itsre/sumo-kitsune:base-dev-${GIT_COMMIT_SHORT:-latest}
-    command: celery -A kitsune beat -l info
-    env_file: .env
-    volumes:
-      - ./:/app:delegated
-    user: ${UID:-kitsune}
-    depends_on:
-      - mariadb
-      - redis
-
   mailcatcher:
     image: schickling/mailcatcher
     ports:
       - "1080:1080"
 
 volumes:
-    mysqlvolume:
+  mysqlvolume:

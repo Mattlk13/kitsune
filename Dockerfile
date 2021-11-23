@@ -11,7 +11,7 @@ RUN npm run production
 ################################
 # Python dependencies builder
 #
-FROM python:3.8-buster AS base
+FROM python:3.9-buster AS base
 
 WORKDIR /app
 EXPOSE 8000
@@ -23,22 +23,21 @@ ENV PYTHONUNBUFFERED=1
 ENV PATH="/venv/bin:$PATH"
 
 RUN python -m venv /venv
-RUN pip install --upgrade "pip==20.2.3"
+RUN pip install --upgrade "pip==21.3.1"
 RUN useradd -d /app -M --uid 1000 --shell /usr/sbin/nologin kitsune
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-            gettext build-essential \
-            libxml2-dev libxslt1-dev zlib1g-dev git \
-            libjpeg-dev libffi-dev libssl-dev libxslt1.1 \
-            libmariadb3 mariadb-client && \
+    gettext build-essential \
+    libxml2-dev libxslt1-dev zlib1g-dev git \
+    libjpeg-dev libffi-dev libssl-dev libxslt1.1 \
+    libmariadb3 mariadb-client && \
     rm -rf /var/lib/apt/lists/*
 
 COPY ./requirements/*.txt /app/requirements/
 
 RUN pip install --no-cache-dir --require-hashes -r requirements/default.txt && \
-    pip install --no-cache-dir --require-hashes -r requirements/dev.txt && \
-    pip install --no-cache-dir --require-hashes -r requirements/test.txt
+    pip install --no-cache-dir --require-hashes -r requirements/dev.txt
 
 ARG GIT_SHA=head
 ENV GIT_SHA=${GIT_SHA}
@@ -50,31 +49,14 @@ ENV GIT_SHA=${GIT_SHA}
 FROM base AS base-dev
 RUN apt-get update && apt-get install apt-transport-https && \
     curl -sL https://deb.nodesource.com/setup_12.x | bash -
-RUN apt-get update && apt-get install -y --no-install-recommends optipng nodejs && \
+RUN apt-get update && apt-get install -y --no-install-recommends optipng nodejs zip && \
     rm -rf /var/lib/apt/lists/*
-
-
-################################
-# Staticfiles builder
-#
-FROM base-dev AS staticfiles
-
-COPY --from=frontend-base --chown=kitsune:kitsune /app/assets /app/assets
-COPY --from=frontend-base --chown=kitsune:kitsune /app/node_modules /app/node_modules
-
-COPY . .
-
-RUN cp .env-build .env && \
-    ./manage.py nunjucks_precompile && \
-    ./manage.py compilejsi18n && \
-    ./manage.py collectstatic --noinput && \
-    npx svgo -r -f static
 
 
 ################################
 # Fetch locales
 #
-FROM python:3.8-buster AS locales
+FROM python:3.9-buster AS locales
 
 WORKDIR /app
 
@@ -98,9 +80,29 @@ ENV GIT_SHA ${GIT_SHA}
 
 
 ################################
+# Staticfiles builder
+#
+FROM base-dev AS staticfiles
+
+COPY --from=frontend-base --chown=kitsune:kitsune /app/assets /app/assets
+COPY --from=frontend-base --chown=kitsune:kitsune /app/node_modules /app/node_modules
+COPY --from=locales /app/locale /app/locale
+
+COPY . .
+
+RUN cp .env-build .env && \
+    ./manage.py nunjucks_precompile && \
+    ./manage.py compilejsi18n && \
+    # minify jsi18n files:
+    find jsi18n/ -name "*.js" -exec sh -c 'npx uglifyjs "$1" -o "${1%.js}-min.js"' sh {} \; && \
+    ./manage.py collectstatic --noinput && \
+    npx svgo -r -f static
+
+
+################################
 # Full prod image sans locales
 #
-FROM python:3.8-slim-buster AS full-no-locales
+FROM python:3.9-slim-buster AS full-no-locales
 
 WORKDIR /app
 
@@ -121,7 +123,6 @@ RUN groupadd --gid 1000 kitsune && useradd -g kitsune --uid 1000 --shell /usr/sb
 
 COPY --from=base --chown=kitsune:kitsune /venv /venv
 COPY --from=staticfiles --chown=kitsune:kitsune /app/static /app/static
-COPY --from=staticfiles --chown=kitsune:kitsune /app/jsi18n /app/jsi18n
 
 COPY --chown=kitsune:kitsune . .
 

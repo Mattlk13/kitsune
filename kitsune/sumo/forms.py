@@ -2,6 +2,16 @@ from django import forms
 
 from kitsune.sumo.utils import check_for_spam_content
 
+TRUSTED_GROUPS = [
+    "Forum Moderators",
+    "Administrators",
+    "SUMO Locale Leaders",
+    "Knowledge Base Reviewers",
+    "Reviewers",
+    # Temporary workaround to exempt individual users if needed
+    "Escape Spam Filtering",
+]
+
 
 class KitsuneBaseForumForm(forms.Form):
     """Base form suitable for all the project.
@@ -12,6 +22,7 @@ class KitsuneBaseForumForm(forms.Form):
     def __init__(self, *args, **kwargs):
         """Override init method to get the user if possible."""
         self.user = kwargs.pop("user", None)
+        self.question = kwargs.pop("question", None)
         super(KitsuneBaseForumForm, self).__init__(*args, **kwargs)
 
     def clean(self, *args, **kwargs):
@@ -32,7 +43,8 @@ class KitsuneBaseForumForm(forms.Form):
 
         # Exclude moderators and trusted contributors
         if not (
-            self.user.has_perm("flagit.can_moderate")
+            self.user.groups.filter(name__in=TRUSTED_GROUPS).exists()
+            or self.user.has_perm("flagit.can_moderate")
             or self.user.has_perm("sumo.bypass_ratelimit")
         ) and check_for_spam_content(cdata):
             self.cleaned_data.update({"is_spam": True})

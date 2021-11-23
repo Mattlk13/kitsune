@@ -1,11 +1,9 @@
-from django.conf.urls import include, url
+import authority
 from django.conf import settings
-from django.views.i18n import JavaScriptCatalog
-from django.views.decorators.cache import cache_page
+from django.conf.urls import include, url
+from django.urls import path
 from django.views.generic.base import RedirectView
 from django.views.static import serve as servestatic
-
-import authority
 from waffle.views import wafflejs
 
 from kitsune.sumo import views as sumo_views
@@ -24,7 +22,7 @@ authority.autodiscover()
 
 urlpatterns = [
     url(r"^search", include("kitsune.search.urls")),
-    url(r"^forums", include("kitsune.forums.urls")),
+    path("forums/", include("kitsune.forums.urls")),
     url(r"^questions", include("kitsune.questions.urls")),
     url(r"^flagged", include("kitsune.flagit.urls")),
     url(r"^upload", include("kitsune.upload.urls")),
@@ -40,21 +38,6 @@ urlpatterns = [
     url(r"^announcements", include("kitsune.announcements.urls")),
     url(r"^community", include("kitsune.community.urls")),
     url(r"^badges/", include("kitsune.kbadge.urls")),
-    # Javascript translations.
-    url(
-        r"^jsi18n/.*$",
-        cache_page(60 * 60 * 24 * 365)(JavaScriptCatalog.as_view()),
-        {"domain": "djangojs", "packages": ["kitsune"]},
-        name="jsi18n",
-    ),
-    # App translations. These don't need cached because they are downloaded
-    # in a build step, not on the client.
-    url(
-        r"^jsi18n-yaocho/.*$",
-        JavaScriptCatalog.as_view(),
-        {"domain": "yaocho", "packages": ["kitsune"]},
-        name="jsi18n-yaocho",
-    ),
     # JavaScript Waffle.
     url(r"^wafflejs$", wafflejs, name="wafflejs"),
     url(r"^", include("kitsune.dashboards.urls")),
@@ -68,14 +51,11 @@ urlpatterns = [
     # v1 APIs
     url(r"^api/1/kb/", include("kitsune.wiki.urls_api")),
     url(r"^api/1/products/", include("kitsune.products.urls_api")),
-    url(r"^api/1/customercare/", include("kitsune.customercare.urls_api")),
     url(r"^api/1/gallery/", include("kitsune.gallery.urls_api")),
     url(r"^api/1/users/", include("kitsune.users.urls_api")),
     # v2 APIs
     url(r"^api/2/", include("kitsune.notifications.urls_api")),
     url(r"^api/2/", include("kitsune.questions.urls_api")),
-    url(r"^api/2/", include("kitsune.search.urls_api")),
-    url(r"^api/2/", include("kitsune.community.urls_api")),
     url(r"^api/2/", include("kitsune.sumo.urls_api")),
     # These API urls include both v1 and v2 urls.
     url(r"^api/", include("kitsune.users.urls_api")),
@@ -99,6 +79,13 @@ if settings.DEBUG:
             sumo_views.serve_cors,
             {"document_root": settings.MEDIA_ROOT},
         ),
+    ]
+
+if settings.SHOW_DEBUG_TOOLBAR:
+    import debug_toolbar
+
+    urlpatterns += [
+        url("__debug__/", include(debug_toolbar.urls)),
     ]
 
 

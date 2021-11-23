@@ -1,23 +1,22 @@
-from datetime import datetime, date, timedelta
+from datetime import date, datetime, timedelta
 
 from nose.tools import eq_
 
 from kitsune.community.utils import (
     top_contributors_kb,
     top_contributors_l10n,
-    top_contributors_aoa,
     top_contributors_questions,
 )
-from kitsune.customercare.tests import ReplyFactory
 from kitsune.products.tests import ProductFactory
 from kitsune.questions.tests import AnswerFactory
-from kitsune.search.tests.test_es import ElasticTestCase
+from kitsune.search.tests import Elastic7TestCase
 from kitsune.sumo.tests import LocalizingClient
 from kitsune.wiki.tests import DocumentFactory, RevisionFactory
 
 
-class TopContributorTests(ElasticTestCase):
+class TopContributorTests(Elastic7TestCase):
     client_class = LocalizingClient
+    search_tests = True
 
     def test_top_contributors_kb(self):
         d = DocumentFactory(locale="en-US")
@@ -25,8 +24,6 @@ class TopContributorTests(ElasticTestCase):
         RevisionFactory(document=d, creator=r1.creator)
         RevisionFactory(document=d)
         r4 = RevisionFactory(document=d, created=date.today() - timedelta(days=91))
-
-        self.refresh()
 
         # By default, we should only get 2 top contributors back.
         top, _ = top_contributors_kb()
@@ -77,21 +74,6 @@ class TopContributorTests(ElasticTestCase):
         # If no locale is passed, it includes all locales except en-US.
         top, _ = top_contributors_l10n()
         eq_(3, len(top))
-
-    def test_top_contributors_aoa(self):
-        r1 = ReplyFactory()
-        ReplyFactory(user=r1.user)
-        r3 = ReplyFactory()
-        r4 = ReplyFactory(created=date.today() - timedelta(days=91))
-
-        self.refresh()
-
-        # By default, we should only get 2 top contributors back.
-        top, _ = top_contributors_aoa()
-        eq_(2, len(top))
-        assert r4.user_id not in [u["term"] for u in top]
-        eq_(r1.user_id, top[0]["term"])
-        eq_(r3.user_id, top[1]["term"])
 
     def test_top_contributors_questions(self):
         firefox = ProductFactory(slug="firefox")

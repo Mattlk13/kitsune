@@ -1,7 +1,10 @@
 import logging
 import re
 
+from django.conf import settings
+
 from kitsune.questions.models import Answer, Question
+from kitsune.wiki.utils import get_featured_articles as kb_get_featured_articles
 
 log = logging.getLogger("k.questions")
 
@@ -47,10 +50,38 @@ def get_mobile_product_from_ua(user_agent):
     # android
     try:
         # We are using firefox instead of Firefox as lower() has been applied to the UA
-        mobile_client = re.search(r"firefox/(?P<version>\d+)\.\d+", ua).groupdict()
+        re.search(r"firefox/(?P<version>\d+)\.\d+", ua).groupdict()
     except AttributeError:
         return None
     else:
-        if int(mobile_client["version"]) >= 69:
-            return "firefox-preview"
         return "mobile"
+
+
+def get_featured_articles(product, locale):
+    """
+    Returns 4 featured articles for the AAQ.
+
+    Will return pinned articles first, then fill randomly from the most visited articles.
+
+    For pinned articles in WIKI_DEFAULT_LANGUAGE, return a localized version if it exists.
+    For pinned articles in other locales, return them only if `locale` matches.
+    """
+    if config := product.aaq_configs.first():
+        pinned_articles = [
+            localized_article
+            for article in config.pinned_articles.filter(
+                locale__in=(locale, settings.WIKI_DEFAULT_LANGUAGE)
+            )
+            if (
+                localized_article := article
+                if article.locale == locale
+                else article.translated_to(locale)
+            )
+        ]
+    else:
+        pinned_articles = []
+
+    if len(pinned_articles) < 4:
+        return (pinned_articles + kb_get_featured_articles(product=product, locale=locale))[:4]
+
+    return pinned_articles[-4:]

@@ -5,7 +5,6 @@ PIPELINE_JS = {
         "source_filenames": (
             "sumo/js/i18n.js",
             "underscore/underscore.js",
-            "moment/moment.js",
             "jquery/dist/jquery.min.js",
             "jquery/jquery-migrate.js",
             "sumo/js/libs/jquery.cookie.js",
@@ -16,7 +15,7 @@ PIPELINE_JS = {
             "nunjucks/browser/nunjucks-slim.js",
             "sumo/js/nunjucks.js",
             "sumo/js/cached_xhr.js",
-            "sumo/js/search_utils.js",
+            "sumo/js/search_utils.es6",
             "sumo/js/browserdetect.js",
             "sumo/js/libs/uitour.js",
             "sumo/js/kbox.js",
@@ -27,8 +26,7 @@ PIPELINE_JS = {
             "mailcheck/src/mailcheck.js",
             "sumo/js/ui.js",
             "sumo/js/analytics.js",
-            "sumo/js/surveygizmo.js",
-            "sumo/js/instant_search.js",
+            "sumo/js/instant_search.es6",
             "sumo/js/responsive-nav-toggle.js",
             "sumo/js/profile-avatars.js",
             "protocol/js/protocol-base.js",
@@ -42,13 +40,13 @@ PIPELINE_JS = {
             "protocol/js/protocol-newsletter.js",
             "protocol/js/protocol-notification-bar.js",
             "protocol/js/protocol-lang-switcher.js",
-            "sumo/js/protocol-nav.js",
+            "sumo/js/protocol-nav.es6",
             "sumo/js/protocol-details-init.js",
-            "sumo/js/protocol-modal-init.js",
+            "sumo/js/protocol-modal-init.es6",
             "sumo/js/protocol-notification-init.js",
             "sumo/js/protocol-language-switcher-init.js",
-            "sumo/js/sumo-tabs.js",
-            "sumo/js/sumo-close-this.js",
+            "sumo/js/sumo-tabs.es6",
+            "sumo/js/sumo-close-this.es6",
         ),
         "output_filename": "build/common-min.js",
     },
@@ -94,6 +92,10 @@ PIPELINE_JS = {
     "questions.metrics": {
         "source_filenames": ("sumo/js/questions.metrics-dashboard.js",),
         "output_filename": "build/questions.metrics-min.js",
+    },
+    "questions.geo": {
+        "source_filenames": ("sumo/js/location.es6",),
+        "output_filename": "build/questions.geo-min.js",
     },
     "products": {
         "source_filenames": (
@@ -178,16 +180,6 @@ PIPELINE_JS = {
     "wiki.dashboard": {
         "source_filenames": ("sumo/js/wiki.dashboard.js",),
         "output_filename": "build/wiki.dashboard-min.js",
-    },
-    "customercare": {
-        "source_filenames": (
-            "sumo/js/libs/jquery.cookie.js",
-            "sumo/js/libs/jquery.bullseye-1.0.min.js",
-            "sumo/js/libs/twitter-text.js",
-            "sumo/js/customercare.js",
-            "sumo/js/users.js",
-        ),
-        "output_filename": "build/customercare-min.js",
     },
     "users": {
         "source_filenames": (

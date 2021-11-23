@@ -70,12 +70,7 @@ DATABASES = {
 
 if DATABASES["default"]["ENGINE"] == "django.db.backends.mysql":
     DATABASES["default"]["CONN_MAX_AGE"] = DB_CONN_MAX_AGE
-    DATABASES["default"]["OPTIONS"] = {"init_command": "SET storage_engine=InnoDB"}
-    DATABASE_ROUTERS = ("multidb.PinningMasterSlaveRouter",)
-
-# Add read-only databases here. The database can be the same as the `default`
-# database but with a user with read permissions only.
-SLAVE_DATABASES = []
+    DATABASES["default"]["OPTIONS"] = {"init_command": "SET default_storage_engine=InnoDB"}
 
 # Cache Settings
 CACHES = {
@@ -89,13 +84,16 @@ CACHES = {
         },
     },
 }
+CACHE_SHORT_TIMEOUT = config("CACHE_SHORT_TIMEOUT", cast=int, default=60 * 60)  # 1 hour
+CACHE_MEDIUM_TIMEOUT = config("CACHE_MEDIUM_TIMEOUT", cast=int, default=60 * 60 * 3)  # 3 hours
+CACHE_LONG_TIMEOUT = config("CACHE_LONG_TIMEOUT", cast=int, default=60 * 60 * 24)  # 24 hours
 
 CACHE_MIDDLEWARE_SECONDS = config(
     "CACHE_MIDDLEWARE_SECONDS", default=(2 * 60 * 60) if READ_ONLY else 0, cast=int
 )
 
 # Setting this to the Waffle version.
-WAFFLE_CACHE_PREFIX = "w0.11:"
+WAFFLE_CACHE_PREFIX = "w2.1:"
 # User agent cache settings
 USER_AGENTS_CACHE = "default"
 
@@ -200,6 +198,15 @@ SUMO_LANGUAGES = (
     "zh-TW",
     "zu",
 )
+
+# Modifies the locale to fallback to, for these locales.
+# By default all locales (including the fallback locale)
+# will fallback to en (unless it is also a key in this dict).
+FALLBACK_LANGUAGES = {
+    "fy-NL": "fy",
+    "zh-CN": "zh-Hans",
+    "zh-TW": "zh-Hant",
+}
 
 # These languages won't show a warning about FxOS when contributors try
 # to add content.
@@ -344,7 +351,13 @@ ES_LOCALE_ANALYZERS = {
 
 ES_PLUGIN_ANALYZERS = ["polish"]
 
-ES_USE_PLUGINS = config("ES_USE_PLUGINS", default=True, cast=bool)
+ES_USE_PLUGINS = config("ES_USE_PLUGINS", default=not DEBUG, cast=bool)
+
+ES_BULK_DEFAULT_TIMEOUT = config("ES_BULK_DEFAULT_TIMEOUT", default=10, cast=float)
+ES_BULK_MAX_RETRIES = config("ES_BULK_MAX_RETRIES", default=1, cast=int)
+
+ES_DEFAULT_SQL_CHUNK_SIZE = config("ES_DEFAULT_SQL_CHUNK_SIZE", default=1000, cast=int)
+ES_DEFAULT_ELASTIC_CHUNK_SIZE = config("ES_DEFAULT_ELASTIC_CHUNK_SIZE", default=50, cast=int)
 
 TEXT_DOMAIN = "messages"
 
@@ -418,6 +431,7 @@ SUPPORTED_NONLOCALES = (
     "oidc",
     "healthz",
     "readiness",
+    "__debug__",
 )
 
 # Make this unique, and don't share it with anybody.
@@ -433,6 +447,7 @@ _CONTEXT_PROCESSORS = [
     "kitsune.sumo.context_processors.global_settings",
     "kitsune.sumo.context_processors.i18n",
     "kitsune.sumo.context_processors.aaq_languages",
+    "kitsune.sumo.context_processors.current_year",
     "kitsune.messages.context_processors.unread_message_count",
 ]
 
@@ -481,7 +496,6 @@ MIDDLEWARE = (
     "kitsune.sumo.middleware.FilterByUserAgentMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
-    "multidb.middleware.PinningRouterMiddleware",
     "commonware.request.middleware.SetRemoteAddrFromForwardedFor",
     "kitsune.sumo.middleware.EnforceHostIPMiddleware",
     # VaryNoCacheMiddleware must be above LocaleURLMiddleware
@@ -507,7 +521,6 @@ MIDDLEWARE = (
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "kitsune.sumo.anonymous.AnonymousIdentityMiddleware",
     "kitsune.sumo.middleware.ReadOnlyMiddleware",
-    "kitsune.twitter.middleware.SessionMiddleware",
     "kitsune.sumo.middleware.PlusToSpaceMiddleware",
     "commonware.middleware.ScrubRequestOnException",
     "waffle.middleware.WaffleMiddleware",
@@ -591,12 +604,16 @@ else:
         FXA_USERNAME_ALGO = config("FXA_USERNAME_ALGO", default=_username_algo)
         FXA_STORE_ACCESS_TOKEN = config("FXA_STORE_ACCESS_TOKEN", default=False, cast=bool)
         FXA_STORE_ID_TOKEN = config("FXA_STORE_ID_TOKEN", default=False, cast=bool)
-        FXA_SUPPORT_FORM = config(
-            "FXA_SUPPORT_FORM", default="https://accounts.firefox.com/support"
+        FXA_SUBSCRIPTIONS = config(
+            "FXA_SUBSCRIPTIONS", default="https://accounts.firefox.com/subscriptions"
         )
         FXA_SET_ISSUER = config("FXA_SET_ISSUER", default="https://accounts.firefox.com")
 
 ADMIN_REDIRECT_URL = config("ADMIN_REDIRECT_URL", default=None)
+
+# this allows logging in as any user, no password necessary
+# never, ever, ever enable this on anything other than your local, firewalled, dev machine
+ENABLE_DEV_LOGIN = config("ENABLE_DEV_LOGIN", default=False, cast=bool)
 
 AUTH_PROFILE_MODULE = "users.Profile"
 USER_AVATAR_PATH = "uploads/avatars/"
@@ -650,7 +667,6 @@ INSTALLED_APPS = (
     "kitsune.dashboards",
     "kitsune.gallery",
     "kitsune.customercare",
-    "kitsune.twitter",
     "kitsune.inproduct",
     "kitsune.postcrash",
     "kitsune.landings",
@@ -732,7 +748,6 @@ PUENTE = {
 STANDALONE_DOMAINS = [
     TEXT_DOMAIN,
     "djangojs",
-    "yaocho",
 ]
 
 STATICI18N_DOMAIN = "djangojs"
@@ -744,7 +759,11 @@ STATICI18N_ROOT = path("jsi18n")
 #
 # Django Pipline
 PIPELINE = {
-    "COMPILERS": ("kitsune.lib.pipeline_compilers.BrowserifyCompiler",),
+    "PIPELINE_ENABLED": config("PIPELINE_ENABLED", default=False, cast=bool),
+    "COMPILERS": (
+        "kitsune.lib.pipeline_compilers.BrowserifyCompiler",
+        "pipeline.compilers.es6.ES6Compiler",
+    ),
     "JAVASCRIPT": PIPELINE_JS,
     "DISABLE_WRAPPER": True,
     "JS_COMPRESSOR": "pipeline.compressors.uglifyjs.UglifyJSCompressor",
@@ -752,11 +771,7 @@ PIPELINE = {
     "UGLIFYJS_ARGUMENTS": "",
     "BROWSERIFY_BINARY": path("node_modules/.bin/browserify"),
     "BROWSERIFY_ARGUMENTS": "-t babelify",
-    "PIPELINE_COLLECTOR_ENABLED": config(
-        "PIPELINE_COLLECTOR_ENABLED",
-        default=not DEBUG,
-        cast=bool,
-    ),
+    "BABEL_BINARY": "node_modules/.bin/babel",
 }
 
 if DEBUG:
@@ -780,17 +795,17 @@ SESSION_SERIALIZER = config(
 # CSRF
 CSRF_COOKIE_SECURE = config("CSRF_COOKIE_SECURE", default=not DEBUG, cast=bool)
 #
-# Connection information for Elastic
-ES_URLS = [config("ES_URLS", default="localhost:9200")]
-# Indexes for reading
-ES_INDEXES = {
-    "default": config("ES_INDEXES_DEFAULT", default="default"),
-    "non-critical": config("ES_INDEXES_NON_CRITICAL", default="non-critical"),
-    "metrics": config("ES_INDEXES_METRICS", "metrics"),
-}
-# Indexes for indexing--set this to ES_INDEXES if you want to read to
-# and write to the same index.
-ES_WRITE_INDEXES = ES_INDEXES
+# Connection information for Elastic 7
+ES_TIMEOUT = 5  # Timeout for querying requests
+ES7_URLS = config("ES7_URLS", cast=Csv(), default="elasticsearch7:9200")
+ES7_CLOUD_ID = config("ES7_CLOUD_ID", default="")
+ES7_USE_SSL = config("ES7_USE_SSL", default=False, cast=bool)
+ES7_HTTP_AUTH = config("ES7_HTTP_AUTH", default="", cast=Csv())
+ES7_ENABLE_CONSOLE_LOGGING = config("ES7_ENABLE_CONSOLE_LOGGING", default=False, cast=bool)
+# Pass parameters to the ES7 client
+# like "search_type": "dfs_query_then_fetch"
+ES7_SEARCH_PARAMS = {"request_timeout": ES_TIMEOUT}
+
 # This is prepended to index names to get the final read/write index
 # names used by kitsune. This is so that you can have multiple
 # environments pointed at the same ElasticSearch cluster and not have
@@ -798,10 +813,6 @@ ES_WRITE_INDEXES = ES_INDEXES
 ES_INDEX_PREFIX = config("ES_INDEX_PREFIX", default="sumo")
 # Keep indexes up to date as objects are made/deleted.
 ES_LIVE_INDEXING = config("ES_LIVE_INDEXING", default=True, cast=bool)
-# Timeout for querying requests
-ES_TIMEOUT = 5
-ES_USE_SSL = config("ES_USE_SSL", default=False, cast=bool)
-ES_HTTP_AUTH = config("ES_HTTP_AUTH", default="", cast=Csv())
 
 SEARCH_MAX_RESULTS = 1000
 SEARCH_RESULTS_PER_PAGE = 10
@@ -817,6 +828,7 @@ SEARCH_DEFAULT_MAX_QUESTION_AGE = 180 * 24 * 60 * 60  # seconds
 IA_DEFAULT_CATEGORIES = (
     10,
     20,
+    30,
 )
 
 # The length for which we would like the user to cache search forms
@@ -940,38 +952,9 @@ THUMBNAIL_PROGRESS_WIDTH = 32  # width of the above image
 THUMBNAIL_PROGRESS_HEIGHT = 32  # height of the above image
 VIDEO_MAX_FILESIZE = 52428800  # 50 megabytes, in bytes
 
-# Customer Care settings
-CC_MAX_TWEETS = 500  # Max. no. of tweets in DB
-CC_TWEETS_PERPAGE = 100  # How many tweets to collect in one go. Max: 100.
-CC_SHOW_REPLIES = True  # Show replies to tweets?
-CC_ALLOW_REMOVE = True  # Allow users to hide tweets?
-
-CC_TOP_CONTRIB_CACHE_KEY = "sumo-cc-top-contrib-stats"
-CC_TOP_CONTRIB_SORT = "1w"
-CC_TOP_CONTRIB_LIMIT = 10
-CC_STATS_CACHE_TIMEOUT = 24 * 60 * 60  # 24 hours
-CC_STATS_WARNING = 30 * 60 * 60  # Warn if JSON data is older than 30 hours
-CC_REPLIES_GOAL = 175  # Goal # of replies in 24 hours.
-CC_TWEETS_DAYS = 7  # Limit tweets to those from the last 7 days.
-
-# If any of these words show up in a tweet, it probably isn't
-# actionable, so don't add it to the AoA.
-CC_WORD_BLACKLIST = [
-    "#UninstallFirefox",
-    "pocket",  # bug 1164008
-    "vagina",
-    "slut",
-]
-
 BITLY_API_URL = config("BITLY_API_URL", default="http://api.bitly.com/v3/shorten?callback=?")
 BITLY_LOGIN = config("BITLY_LOGIN", default=None)
 BITLY_API_KEY = config("BITLY_API_KEY", default=None)
-
-TWITTER_COOKIE_SECURE = config("TWITTER_COOKIE_SECURE", default=True, cast=bool)
-TWITTER_CONSUMER_KEY = config("TWITTER_CONSUMER_KEY", default="")
-TWITTER_CONSUMER_SECRET = config("TWITTER_CONSUMER_SECRET", default="")
-TWITTER_ACCESS_TOKEN = config("TWITTER_ACCESS_TOKEN", default="")
-TWITTER_ACCESS_TOKEN_SECRET = config("TWITTER_ACCESS_TOKEN_SECRET", default="")
 
 TIDINGS_FROM_ADDRESS = config("TIDINGS_FROM_ADDRESS", default="notifications@support.mozilla.org")
 # Anonymous watches must be confirmed.
@@ -995,7 +978,6 @@ GA_ACCOUNT = config(
 GA_PROFILE_ID = config(
     "GA_PROFILE_ID", default="12345678"
 )  # Google Analytics profile id for SUMO prod
-GA_START_DATE = date(2012, 11, 10)
 GTM_CONTAINER_ID = config("GTM_CONTAINER_ID", default="")  # Google container ID
 
 REDIS_BACKENDS = {
@@ -1045,6 +1027,21 @@ AXES_BEHIND_REVERSE_PROXY = config("AXES_BEHIND_REVERSE_PROXY", default=not DEBU
 AXES_REVERSE_PROXY_HEADER = config("AXES_REVERSE_PROXY_HEADER", default="HTTP_X_CLUSTER_CLIENT_IP")
 
 USE_DEBUG_TOOLBAR = config("USE_DEBUG_TOOLBAR", default=False, cast=bool)
+
+
+def show_toolbar_callback(*args):
+    return DEBUG and USE_DEBUG_TOOLBAR
+
+
+SHOW_DEBUG_TOOLBAR = show_toolbar_callback()
+
+if SHOW_DEBUG_TOOLBAR:
+
+    DEBUG_TOOLBAR_CONFIG = {"SHOW_TOOLBAR_CALLBACK": "kitsune.settings.show_toolbar_callback"}
+
+    INSTALLED_APPS = INSTALLED_APPS + ("debug_toolbar",)
+
+    MIDDLEWARE = ("debug_toolbar.middleware.DebugToolbarMiddleware",) + MIDDLEWARE
 
 # Set this to True to wrap each HTTP request in a transaction on this database.
 ATOMIC_REQUESTS = config("ATOMIC_REQUESTS", default=True, cast=bool)
@@ -1113,9 +1110,6 @@ if config("SENTRY_DSN", None):
         before_send=filter_exceptions,
     )
 
-
-PIPELINE_ENABLED = config("PIPELINE_ENABLED", default=False, cast=bool)
-
 # Dead Man Snitches
 DMS_ENQUEUE_LAG_MONITOR_TASK = config("DMS_ENQUEUE_LAG_MONITOR_TASK", default=None)
 DMS_SEND_WELCOME_EMAILS = config("DMS_SEND_WELCOME_EMAILS", default=None)
@@ -1124,18 +1118,16 @@ DMS_GENERATE_MISSING_SHARE_LINKS = config("DMS_GENERATE_MISSING_SHARE_LINKS", de
 DMS_REBUILD_KB = config("DMS_REBUILD_KB", default=None)
 DMS_UPDATE_TOP_CONTRIBUTORS = config("DMS_UPDATE_TOP_CONTRIBUTORS", default=None)
 DMS_UPDATE_L10N_COVERAGE_METRICS = config("DMS_UPDATE_L10N_COVERAGE_METRICS", default=None)
-DMS_CALCULATE_CSAT_METRICS = config("DMS_CALCULATE_CSAT_METRICS", default=None)
+# DMS_CALCULATE_CSAT_METRICS = config("DMS_CALCULATE_CSAT_METRICS", default=None)
 DMS_REPORT_EMPLOYEE_ANSWERS = config("DMS_REPORT_EMPLOYEE_ANSWERS", default=None)
-DMS_REINDEX_USERS_THAT_CONTRIBUTED_YESTERDAY = config(
-    "DMS_REINDEX_USERS_THAT_CONTRIBUTED_YESTERDAY", default=None
-)
 DMS_UPDATE_WEEKLY_VOTES = config("DMS_UPDATE_WEEKLY_VOTES", default=None)
 DMS_UPDATE_SEARCH_CTR_METRIC = config("DMS_UPDATE_SEARCH_CTR_METRIC", default=None)
 DMS_UPDATE_CONTRIBUTOR_METRICS = config("DMS_UPDATE_CONTRIBUTOR_METRICS", default=None)
 DMS_AUTO_ARCHIVE_OLD_QUESTIONS = config("DMS_AUTO_ARCHIVE_OLD_QUESTIONS", default=None)
 DMS_REINDEX = config("DMS_REINDEX", default=None)
-DMS_PROCESS_EXIT_SURVEYS = config("DMS_PROCESS_EXIT_SURVEYS", default=None)
-DMS_SURVEY_RECENT_ASKERS = config("DMS_SURVEY_RECENT_ASKERS", default=None)
+DMS_REINDEX_ES7 = config("DMS_REINDEX_ES7", default=None)
+# DMS_PROCESS_EXIT_SURVEYS = config("DMS_PROCESS_EXIT_SURVEYS", default=None)
+# DMS_SURVEY_RECENT_ASKERS = config("DMS_SURVEY_RECENT_ASKERS", default=None)
 # DMS_UPDATE_VISITORS_METRIC = config('DMS_UPDATE_VISITORS_METRIC', default=None)
 DMS_UPDATE_L10N_METRIC = config("DMS_UPDATE_L10N_METRIC", default=None)
 DMS_RELOAD_WIKI_TRAFFIC_STATS = config("DMS_RELOAD_WIKI_TRAFFIC_STATS", default=None)
@@ -1163,7 +1155,6 @@ IMAGE_ATTACHMENT_USER_LIMIT = config("IMAGE_ATTACHMENT_USER_LIMIT", default=50, 
 # list of strings to match against user agent to block
 USER_AGENT_FILTERS = config("USER_AGENT_FILTERS", default="", cast=Csv())
 
-BADGE_LIMIT_ARMY_OF_AWESOME = config("BADGE_LIMIT_ARMY_OF_AWESOME", default=50, cast=int)
 BADGE_LIMIT_L10N_KB = config("BADGE_LIMIT_L10N_KB", default=10, cast=int)
 BADGE_LIMIT_SUPPORT_FORUM = config("BADGE_LIMIT_SUPPORT_FORUM", default=30, cast=int)
 BADGE_MAX_RECENT = config("BADGE_MAX_RECENT", default=15, cast=int)
@@ -1197,3 +1188,19 @@ ALLOW_LINKS_FROM = [
 TOLL_FREE_REGEX = re.compile(r"^.*8(00|33|44|55|66|77|88)[2-9]\d{6,}$")
 REGEX_TIMEOUT = config("REGEX_TIMEOUT", default=5, cast=int)
 NANP_REGEX = re.compile(r"[0-9]{3}-?[a-zA-Z2-9][a-zA-Z0-9]{2}-?[a-zA-Z0-9]{4}")
+
+if ES7_ENABLE_CONSOLE_LOGGING and DEV:
+    es_trace_logger = logging.getLogger("elasticsearch.trace")
+    es_trace_logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    es_trace_logger.addHandler(handler)
+
+# Zendesk Section
+ZENDESK_SUBDOMAIN = config("ZENDESK_SUBDOMAIN", default="")
+ZENDESK_API_TOKEN = config("ZENDESK_API_TOKEN", default="")
+ZENDESK_USER_EMAIL = config("ZENDESK_USER_EMAIL", default="")
+ZENDESK_TICKET_FORM_ID = config("ZENDESK_TICKET_FORM_ID", default="360000417171", cast=int)
+ZENDESK_PRODUCT_FIELD_ID = config("ZENDESK_PRODUCT_FIELD_ID", default="360047198211", cast=int)
+ZENDESK_CATEGORY_FIELD_ID = config("ZENDESK_CATEGORY_FIELD_ID", default="360047206172", cast=int)
+ZENDESK_OS_FIELD_ID = config("ZENDESK_OS_FIELD_ID", default="360018604871", cast=int)
+ZENDESK_COUNTRY_FIELD_ID = config("ZENDESK_COUNTRY_FIELD_ID", default="360026463511", cast=int)

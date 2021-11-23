@@ -6,8 +6,6 @@
   {% set title = _('Top Contributors - Knowledge Base') %}
 {% elif area == 'l10n' %}
   {% set title = _('Top Contributors - Localization') %}
-{% elif area == 'army-of-awesome' %}
-  {% set title = _('Top Contributors - Army of Awesome') %}
 {% endif %}
 {% set crumbs = [(url('community.home'), _('Community Hub')),
                  (None, title)] %}
@@ -57,8 +55,8 @@
         </div>
       {% endif %}
 
-      {# Product Filter - Not included in Army of Awesome leaderboard. #}
-      {% if products and area != 'army-of-awesome' %}
+      {# Product Filter #}
+      {% if products %}
         <div class="selector">
           <button type="button" class="ts-select-trigger">
             <!-- arrow icon using icon font -->
@@ -96,7 +94,9 @@
       {% endif %}
       </div>
 
-      <p class="sumo-page-intro">{{ _('There are {total} users with at least one contribution in the last 90 days.')|f(total=total) }}</p>
+      <p class="sumo-page-intro">
+        {{ _('There are {total} users with at least one contribution in the last 90 days.')|f(total=total) }}
+      </p>
 
     </section>
 
@@ -105,7 +105,9 @@
         <div class="scroll-wrap">
           {% for result in results %}
             <div class="card elevation-01 results-user">
-              <img src="{{ result['user']['avatar'] }}" alt="" class="user-img-results card--img" />
+              {% if result['user']['avatar'] %}
+                <img src="{{ result['user']['avatar'] }}" alt="" class="user-img-results card--img" />
+              {% endif %}
               <span class="numbered">{{ loop.index + ((page - 1) * page_size) }}</span>
               <div class="card--details user-details">
                 <h2 class="card--title">{{ result['user']['display_name'] }}</h2>
@@ -114,7 +116,7 @@
                   <li>{{ _('Contributions in last 90 days: {count}')|f(count=result['count']) }}</li>
                   <li><a href="{{ url('users.profile', result['user']['id']) }}">{{ _('View Profile') }}</a></li>
                   <li><a href="{{ url('messages.new')|urlparams(to=result['user']['username']) }}">{{ _('Private Message') }}</a></li>
-                  {% if result['user']['days_since_last_activity'] != None %}
+                  {% if result['user']['days_since_last_activity'] is not undefined %}
                     <li>
                       {{ _('Days since last activity:') }}
                       {{ result['user']['days_since_last_activity'] }}
@@ -137,7 +139,7 @@
       {% endif %}
       <section class="pagination">
         <ol class="pagination cf">
-          {% for i in range((total/page_size)|int) %}
+          {% for i in range((total/page_size)|round(method='ceil')|int) %}
             <li{% if i + 1 == page %} class="selected"{% endif %}>
               <a href="{{ base_url|urlparams(page=i + 1) }}"{% if i + 1 == page %} class="btn-page"{% endif %}>
                 {{ i + 1 }}

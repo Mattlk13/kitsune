@@ -1,4 +1,4 @@
-@Library('github.com/mozilla-it/jenkins-pipeline@20171123.1')
+@Library('github.com/mozilla-it/jenkins-pipeline@20210601.1')
 def config
 def docker_image
 def dc_name
@@ -60,12 +60,12 @@ conduit {
         stage("Run Tests") {
             try {
                 env.COMPOSE_PROJECT_NAME = "${config.project.name}-${BUILD_NUMBER}-${GIT_COMMIT_SHORT}"
-                // flake8
-                sh "make lint-ci"
-                // mocha
-                sh "make test-js-ci"
-                // unittests
                 try {
+                    // flake8
+                    sh "make lint-ci"
+                    // mocha
+                    sh "make test-js-ci"
+                    // unittests
                     sh "make test-ci"
                 } finally {
                     sh "docker-compose kill"
@@ -112,4 +112,3 @@ conduit {
         sh "bin/slack-notify.sh --status success --stage 'Docker image ready to deploy: ${docker_image}'"
     }
 }
-

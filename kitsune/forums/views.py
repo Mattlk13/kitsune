@@ -1,23 +1,27 @@
 import logging
 from datetime import datetime
 
+from authority.decorators import permission_required_or_403
+from django.contrib import messages
 from django.core.exceptions import PermissionDenied
-from django.http import HttpResponseRedirect, Http404
+from django.http import Http404, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, render
+from django.utils.translation import ugettext as _
 from django.views.decorators.http import require_POST
 
-from authority.decorators import permission_required_or_403
-
-from kitsune import forums as constants
+from kitsune import forums as forum_constants
 from kitsune.access.decorators import has_perm_or_owns_or_403, login_required
 from kitsune.access.utils import has_perm
 from kitsune.forums.events import NewPostEvent, NewThreadEvent
-from kitsune.forums.feeds import ThreadsFeed, PostsFeed
-from kitsune.forums.forms import ReplyForm, NewThreadForm, EditThreadForm, EditPostForm
-from kitsune.forums.models import Forum, Thread, Post
+from kitsune.forums.feeds import PostsFeed, ThreadsFeed
+from kitsune.forums.forms import EditPostForm, EditThreadForm, NewThreadForm, ReplyForm
+from kitsune.forums.models import Forum, Post, Thread
+from kitsune.search.forms import BaseSearchForm
+from kitsune.search.base import SumoSearchPaginator
+from kitsune.search.search import ForumSearch
 from kitsune.sumo.templatetags.jinja_helpers import urlparams
 from kitsune.sumo.urlresolvers import reverse
-from kitsune.sumo.utils import paginate, is_ratelimited
+from kitsune.sumo.utils import is_ratelimited, paginate
 from kitsune.users.models import Setting
 
 log = logging.getLogger("k.forums")
@@ -75,7 +79,7 @@ def threads(request, forum_slug):
     threads_ = sort_threads(forum.thread_set, sort, desc)
     count = threads_.count()
     threads_ = threads_.select_related("creator", "last_post", "last_post__author")
-    threads_ = paginate(request, threads_, per_page=constants.THREADS_PER_PAGE, count=count)
+    threads_ = paginate(request, threads_, per_page=forum_constants.THREADS_PER_PAGE, count=count)
 
     feed_urls = ((reverse("forums.threads.feed", args=[forum_slug]), ThreadsFeed().title(forum)),)
 
@@ -125,7 +129,7 @@ def posts(request, forum_slug, thread_id, form=None, post_preview=None, is_reply
             "forums_post.author_id = auth_user.id"
         }
     )
-    posts_ = paginate(request, posts_, constants.POSTS_PER_PAGE, count=count)
+    posts_ = paginate(request, posts_, forum_constants.POSTS_PER_PAGE, count=count)
 
     if not form:
         form = ReplyForm()
@@ -510,3 +514,37 @@ def post_preview_async(request):
     post.author_post_count = 1
 
     return render(request, "forums/includes/post_preview.html", {"post_preview": post})
+
+
+def search(request, forum_slug=None):
+    """Search a specific forum."""
+
+    try:
+        forum = Forum.objects.get(slug=forum_slug)
+    except Forum.DoesNotExist:
+        raise Http404
+
+    search_form = BaseSearchForm(request.GET, initial={"forum": forum})
+    if not search_form.is_valid():
+        messages.add_message(
+            request, messages.WARNING, _("Something went wrong. Cannot search this forum.")
+        )
+        return threads(request, forum_slug=forum_slug)
+
+    cdata = search_form.cleaned_data
+
+    search = ForumSearch(query=cdata["q"], thread_forum_id=forum.pk)
+
+    # execute search
+    pages = paginate(request, search, paginator_cls=SumoSearchPaginator)
+    total = search.total
+    results = search.results
+    data = {
+        "q": cdata["q"],
+        "results": results,
+        "search_form": search_form,
+        "num_results": total,
+        "forum": forum,
+        "pages": pages,
+    }
+    return render(request, "search/search-results.html", data)

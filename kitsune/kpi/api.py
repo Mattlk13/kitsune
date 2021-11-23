@@ -2,6 +2,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from operator import itemgetter
 
+from django.conf import settings
 from django.core.cache import cache
 from django.db import connections, router
 from django.db.models import Count, F
@@ -17,7 +18,6 @@ from kitsune.kpi.models import (
     Metric,
     MetricKind,
     RetentionMetric,
-    AOA_CONTRIBUTORS_METRIC_CODE,
     KB_ENUS_CONTRIBUTORS_METRIC_CODE,
     KB_L10N_CONTRIBUTORS_METRIC_CODE,
     L10N_METRIC_CODE,
@@ -52,7 +52,7 @@ class CachedAPIView(APIView):
         objs = cache.get(cache_key)
         if objs is None:
             objs = self.get_objects(request)
-            cache.add(cache_key, objs, 60 * 60 * 3)
+            cache.add(cache_key, objs, settings.CACHE_MEDIUM_TIMEOUT)
 
         return Response({"objects": objs})
 
@@ -218,7 +218,6 @@ class ContributorsMetricList(CachedAPIView):
     * en-US KB contributors
     * non-en-US contributors
     * Support Forum contributors
-    * Army of Awesome contributors
     """
 
     def get_objects(self, request):
@@ -232,9 +231,6 @@ class ContributorsMetricList(CachedAPIView):
         kind = MetricKind.objects.get(code=SUPPORT_FORUM_CONTRIBUTORS_METRIC_CODE)
         answers = Metric.objects.filter(kind=kind).order_by("-start")
 
-        kind = MetricKind.objects.get(code=AOA_CONTRIBUTORS_METRIC_CODE)
-        aoa = Metric.objects.filter(kind=kind).order_by("-start")
-
         # Put all the results in a dict with the date as the key.
         results_dict = {}
 
@@ -245,7 +241,6 @@ class ContributorsMetricList(CachedAPIView):
         merge_results(en_us, "en_us")
         merge_results(l10n, "non_en_us")
         merge_results(answers, "support_forum")
-        merge_results(aoa, "aoa")
 
         # Convert that to a list of dicts.
         results_list = [dict(date=k, **v) for k, v in list(results_dict.items())]

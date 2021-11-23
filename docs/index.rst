@@ -27,8 +27,10 @@ Part 2: Developer's Guide
    wsgi
    email
    localization
-   searchchapter
+   search
    frontend
+   browser_permissions
+   zendesk
    notes
 
 
@@ -44,8 +46,8 @@ Part 3: SUMO
    sla
    architectural-decisions
 
-Part 4: Administration
-======================
+Part 4: User Guide
+==================
 
 .. toctree::
    :maxdepth: 2
@@ -53,3 +55,4 @@ Part 4: Administration
    users
    questions
    badges
+   advanced-search

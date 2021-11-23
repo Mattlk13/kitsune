@@ -86,9 +86,9 @@
           <a href="#popular_search_3" data-featured-search>{{ _('Games') }}</a>
 
         {% elif product.slug == "hubs" %}
-          <a href="#popular_search_1" data-featured-search>{{ _('Create rooms') }}</a>
-          <a href="#popular_search_2" data-featured-search>{{ _('Moderate') }}</a>
-          <a href="#popular_search_3" data-featured-search>{{ _('Customize avatar') }}</a>
+          <a href="#popular_search_1" data-featured-search>{{ _('Room size') }}</a>
+          <a href="#popular_search_2" data-featured-search>{{ _('Avatars') }}</a>
+          <a href="#popular_search_3" data-featured-search>{{ _('VR') }}</a>
 
         {% elif product.slug == "focus-firefox" %}
           <a href="#popular_search_1" data-featured-search>{{ _('Autocomplete') }}</a>
@@ -149,10 +149,10 @@
       </div>
       {% endif %}
     </div>
-    {{ help_topics(topics, show_community_support=product.questions_enabled(request.LANGUAGE_CODE)) }}
+    {{ help_topics(topics) }}
   </div>
 
-  {{ topic_metadata(topics, show_community_support=product.questions_enabled(request.LANGUAGE_CODE)) }}
+  {{ topic_metadata(topics, product=product, product_key=product_key) }}
 
 {% if featured %}
   <section class="mzp-l-content mzp-l-content sumo-page-section--inner">
@@ -171,7 +171,4 @@
 {% block for_contributors %}{% endblock %}
 
 {% block outer_side %}
-{% endblock %}
-
-{% block footer_script %}
 {% endblock %}
